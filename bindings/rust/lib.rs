@@ -50,11 +50,57 @@ pub const TAGS_QUERY: &str = include_str!("../../queries/tags.scm");
 
 #[cfg(test)]
 mod tests {
+    use std::{fs::{self, File}, io::{stdout, Read, Write}};
+
+    use walkdir::WalkDir;
+
     #[test]
     fn test_can_load_grammar() {
         let mut parser = tree_sitter::Parser::new();
         parser
             .set_language(&super::LANGUAGE.into())
             .expect("Error loading Rust parser");
+    }
+
+    #[test]
+    fn parse_rustc_suite() {
+        let mut parser: tree_sitter::Parser = tree_sitter::Parser::new();
+        parser
+            .set_language(&super::LANGUAGE.into())
+            .expect("Error loading Rust parser");
+
+        let mut count = 0;
+        let mut failures = Vec::new();
+        for entry in WalkDir::new("/home/user/projects/tree-sitter-rust/rustc_comparison")
+            .follow_links(true)
+            .into_iter()
+            .filter_map(|e| e.ok())
+            .filter(|e| e.file_type().is_file())
+            .filter(|e| e.file_name().to_str().is_some_and(|s| s.ends_with(".rs"))) {
+            let fname = entry.path().display().to_string();
+            count += 1;
+            let tree_sitter_accepts = accepts_file(&fname, &mut parser);
+            let syn_accepts = fname.contains("/valid/");
+            if tree_sitter_accepts != syn_accepts {
+                failures.push((fname, syn_accepts));
+            }
+        }
+
+        failures.sort();
+        for (failure, expected_to_parse) in failures.iter() {
+            println!("{expected_to_parse}: {failure}");
+        }
+        println!("{} parse failures out of {}", failures.len(), count);
+        assert_eq!(failures.len(), 0);
+    }
+
+    fn accepts_file(filename: &str, parser: &mut tree_sitter::Parser) -> bool {
+        let mut f = File::open(filename).expect("no file found");
+        let mut bytes = Vec::new();
+        f.read_to_end(&mut bytes).expect("couldn't read the source file");
+        match parser.parse(&bytes, None) {
+            Some(tree) => !tree.root_node().has_error(),
+            None => false,
+        }
     }
 }
